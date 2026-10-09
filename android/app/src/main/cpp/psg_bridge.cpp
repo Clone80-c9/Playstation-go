@@ -4,6 +4,7 @@
 #include <android/native_window_jni.h>
 
 #include <dlfcn.h>
+#include "psg_core_api.h"
 
 #include <atomic>
 #include <chrono>
@@ -31,14 +32,30 @@ bool processKeyEvent(int keyCode, int action, int source);
 void processMotionEvent(float axisX, float axisY, float axisZ, float axisRZ,
                         float axisLT, float axisRT, float hatX, float hatY);
 void processVirtualInput(int buttonId, bool pressed, float axisX, float axisY);
+PSGInputState getInputStateSnapshot();
+
+extern "C" bool psg_audio_init(int32_t sample_rate, int32_t channel_count,
+                               int32_t buffer_size_frames);
+extern "C" bool psg_audio_write(const int16_t* samples, int32_t frames);
+extern "C" bool psg_audio_set_volume(float volume);
+extern "C" void psg_audio_destroy();
 
 namespace {
 
-using CoreInitFn = int (*)(const char*, const char*, const char*, const char*, ANativeWindow*);
-using CoreRunFn = int (*)();
+using CoreApiVersionFn = uint32_t (*)();
+using CoreInitFn = int (*)(const char*, const char*, const char*, const char*,
+                           const PSGHostCallbacks*, ANativeWindow*);
+using CoreRunFn = int (*)(const PSGInputState*);
 using CoreShutdownFn = void (*)();
 using CoreStateFn = int (*)(const char*);
 using CoreApplySettingsFn = int (*)(const char*);
+
+const PSGHostCallbacks kHostCallbacks{
+    psg_audio_init,
+    psg_audio_write,
+    psg_audio_set_volume,
+    psg_audio_destroy,
+};
 
 ANativeWindow* g_window = nullptr;
 void* g_core_handle = nullptr;
@@ -52,8 +69,11 @@ std::string g_loaded_core_name;
 std::string g_files_dir;
 std::mutex g_state_mutex;
 std::condition_variable g_thread_finished_condition;
+std::condition_variable g_startup_condition;
 bool g_thread_finished = true;
 bool g_core_initialized = false;
+bool g_startup_complete = true;
+std::string g_startup_error;
 
 template <typename T>
 T get_core_symbol(const char* name) {
@@ -303,6 +323,32 @@ Java_com_psg_app_PSGEmulatorBridge_nativeInit(JNIEnv* env, jobject, jobject surf
     }
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_psg_app_PSGEmulatorBridge_nativeReleaseSurface(JNIEnv* env, jobject) {
+    try {
+        if (env == nullptr) {
+            return JNI_FALSE;
+        }
+
+        std::lock_guard<std::mutex> lock(g_state_mutex);
+        if (g_emulation_running.load()) {
+            LOGE("Cannot release the native window while emulation is running");
+            return JNI_FALSE;
+        }
+        if (g_window != nullptr) {
+            ANativeWindow_release(g_window);
+            g_window = nullptr;
+        }
+        return JNI_TRUE;
+    } catch (const std::exception& exception) {
+        LOGE("nativeReleaseSurface failed: %s", exception.what());
+        return JNI_FALSE;
+    } catch (...) {
+        LOGE("nativeReleaseSurface failed with an unknown error");
+        return JNI_FALSE;
+    }
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_psg_app_PSGEmulatorBridge_nativeLoadCore(JNIEnv* env, jobject,
                                                   jstring core_path) {
@@ -337,14 +383,34 @@ Java_com_psg_app_PSGEmulatorBridge_nativeLoadCore(JNIEnv* env, jobject,
 
         void* previous_handle = g_core_handle;
         g_core_handle = handle;
-        if (get_core_symbol<CoreInitFn>("psg_core_init") == nullptr) {
+        CoreApiVersionFn get_api_version =
+            get_core_symbol<CoreApiVersionFn>("psg_core_api_version");
+        CoreInitFn core_init = get_core_symbol<CoreInitFn>("psg_core_init");
+        CoreRunFn core_run = get_core_symbol<CoreRunFn>("psg_core_run");
+        CoreShutdownFn core_shutdown =
+            get_core_symbol<CoreShutdownFn>("psg_core_shutdown");
+        if (get_api_version == nullptr || core_init == nullptr ||
+            core_run == nullptr || core_shutdown == nullptr) {
             g_core_handle = previous_handle;
             if (dlclose(handle) != 0) {
                 const char* error = dlerror();
                 LOGE("Unable to close core with missing entry point: %s",
                      error == nullptr ? "unknown dlclose error" : error);
             }
-            return make_java_string(env, "ERROR: core entry point psg_core_init is missing");
+            return make_java_string(
+                env, "ERROR: core is missing required PSG ABI entry points");
+        }
+        const uint32_t api_version = get_api_version();
+        if (api_version != PSG_CORE_API_VERSION) {
+            g_core_handle = previous_handle;
+            if (dlclose(handle) != 0) {
+                const char* error = dlerror();
+                LOGE("Unable to close core with incompatible PSG API: %s",
+                     error == nullptr ? "unknown dlclose error" : error);
+            }
+            return make_java_string(
+                env, "ERROR: incompatible PSG core API version " +
+                         std::to_string(api_version));
         }
 
         g_loaded_core_name = std::filesystem::path(path).stem().string();
@@ -397,7 +463,7 @@ Java_com_psg_app_PSGEmulatorBridge_nativeLaunchGame(
                 env, "{\"status\":\"error\",\"reason\":\"unable to close ROM file\"}");
         }
 
-        std::lock_guard<std::mutex> lock(g_state_mutex);
+        std::unique_lock<std::mutex> lock(g_state_mutex);
         if (g_window == nullptr) {
             return make_java_string(env,
                                     "{\"status\":\"error\",\"reason\":\"native window is not initialized\"}");
@@ -424,6 +490,8 @@ Java_com_psg_app_PSGEmulatorBridge_nativeLaunchGame(
         g_current_console_type = console;
         g_core_initialized = false;
         g_thread_finished = false;
+        g_startup_complete = false;
+        g_startup_error.clear();
         g_emulation_running.store(true);
 
         try {
@@ -431,19 +499,28 @@ Java_com_psg_app_PSGEmulatorBridge_nativeLaunchGame(
                 [core_init, core_run, rom, console, bios, settings]() {
                     try {
                         if (core_init(rom.c_str(), console.c_str(), bios.c_str(),
-                                      settings.c_str(), g_window) != 0) {
+                                      settings.c_str(), &kHostCallbacks,
+                                      g_window) != 0) {
                             LOGE("Core initialization failed");
+                            std::lock_guard<std::mutex> startup_lock(g_state_mutex);
+                            g_startup_error = "Core initialization failed";
+                            g_startup_complete = true;
+                            g_startup_condition.notify_all();
                         } else {
                             {
                                 std::lock_guard<std::mutex> initialized_lock(g_state_mutex);
                                 g_core_initialized = true;
+                                g_startup_complete = true;
                             }
+                            g_startup_condition.notify_all();
                             checkAndUpdateThermal();
                             auto next_thermal_check =
                                 std::chrono::steady_clock::now() +
                                 std::chrono::seconds(3);
                             while (g_emulation_running.load()) {
-                                const int result = core_run();
+                                const PSGInputState input_state =
+                                    getInputStateSnapshot();
+                                const int result = core_run(&input_state);
                                 if (result != 0) {
                                     LOGE("Core run loop returned error %d", result);
                                     break;
@@ -459,23 +536,60 @@ Java_com_psg_app_PSGEmulatorBridge_nativeLaunchGame(
                     } catch (const std::exception& exception) {
                         LOGE("Emulation thread failed: %s", exception.what());
                         g_emulation_running.store(false);
+                        std::lock_guard<std::mutex> startup_lock(g_state_mutex);
+                        if (!g_startup_complete) {
+                            g_startup_error = exception.what();
+                            g_startup_complete = true;
+                            g_startup_condition.notify_all();
+                        }
                     } catch (...) {
                         LOGE("Emulation thread failed with an unknown error");
                         g_emulation_running.store(false);
+                        std::lock_guard<std::mutex> startup_lock(g_state_mutex);
+                        if (!g_startup_complete) {
+                            g_startup_error = "Unknown core initialization error";
+                            g_startup_complete = true;
+                            g_startup_condition.notify_all();
+                        }
                     }
                     g_emulation_running.store(false);
                     {
                         std::lock_guard<std::mutex> finished_lock(g_state_mutex);
                         g_thread_finished = true;
+                        if (!g_startup_complete) {
+                            g_startup_error = "Core stopped before startup completed";
+                            g_startup_complete = true;
+                        }
                     }
+                    g_startup_condition.notify_all();
                     g_thread_finished_condition.notify_all();
                 });
         } catch (...) {
             g_emulation_running.store(false);
             g_thread_finished = true;
+            g_startup_complete = true;
             return make_java_string(
                 env, "{\"status\":\"error\",\"reason\":\"unable to create emulation thread\"}");
         }
+
+        lock.unlock();
+        std::unique_lock<std::mutex> startup_lock(g_state_mutex);
+        const bool startup_reported = g_startup_condition.wait_for(
+            startup_lock, std::chrono::seconds(60),
+            [] { return g_startup_complete; });
+        if (!startup_reported) {
+            g_emulation_running.store(false);
+            return make_java_string(
+                env, "{\"status\":\"error\",\"reason\":\"core startup timed out\"}");
+        }
+        if (!g_startup_error.empty()) {
+            const std::string startup_error = g_startup_error;
+            startup_lock.unlock();
+            return make_java_string(
+                env, "{\"status\":\"error\",\"reason\":\"" +
+                         json_escape(startup_error) + "\"}");
+        }
+        startup_lock.unlock();
 
         const std::string response =
             "{\"status\":\"launched\",\"console\":\"" + json_escape(console) +
@@ -534,10 +648,6 @@ Java_com_psg_app_PSGEmulatorBridge_nativeStopGame(JNIEnv* env, jobject) {
             g_core_handle = nullptr;
         }
 
-        if (g_window != nullptr) {
-            ANativeWindow_release(g_window);
-            g_window = nullptr;
-        }
         g_current_console_type.clear();
         g_current_rom_path.clear();
         g_loaded_core_name.clear();
@@ -550,6 +660,14 @@ Java_com_psg_app_PSGEmulatorBridge_nativeStopGame(JNIEnv* env, jobject) {
         LOGE("nativeStopGame failed with an unknown error");
         return JNI_FALSE;
     }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_psg_app_PSGEmulatorBridge_nativeIsGameRunning(JNIEnv* env, jobject) {
+    if (env == nullptr) {
+        return JNI_FALSE;
+    }
+    return g_emulation_running.load() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

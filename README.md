@@ -12,9 +12,9 @@ BIOS files needed to run games.
 > [!IMPORTANT]
 > This is a development preview, not a game-ready emulator or a production
 > release. The APK currently produced by the release build is **unsigned** and
-> cannot be installed as a normal Android app. A signed release and a
-> device-side installation/management flow for legally obtained cores and BIOS
-> files are still required before public distribution.
+> cannot be installed as a normal Android app. The app can import user-selected
+> games, cores, and BIOS files, but no compatible emulator cores are bundled.
+> Public release also requires signing and real-device validation.
 
 ## Project profile
 
@@ -32,18 +32,19 @@ BIOS files needed to run games.
 ## What is in the repository
 
 - Flutter app entry point, splash screen, and a preview dashboard with Android
-  controller discovery and honest setup/status messaging.
-- Kotlin platform code for emulator/core operations, controller input, and
-  thermal monitoring.
+  controller discovery, private game/core/BIOS import, and a native game view.
+- Kotlin platform code for game/core/BIOS imports, native surface lifecycle,
+  controller input, and thermal monitoring.
 - C++ sources for the native bridge, input, renderer, audio, and thermal
   components.
 - Flutter method-channel interfaces connecting Dart UI code to Android.
 - Android Bluetooth/controller permissions and ARM64 native build configuration.
 
-The native bridge has interfaces for loading cores, launching a game, renderer
-setup, controller input, performance information, and save-state operations.
-These interfaces do not mean that the project currently ships working console
-cores or a complete playable frontend.
+The native bridge loads versioned PSG-compatible cores, launches a game into an
+Android native surface, passes controller snapshots, and exposes audio host
+callbacks. The player offers touch controls and supports physical gamepads. The
+repository does not ship a compatible console core, so this integration alone
+is not a playable emulator.
 
 ### Important runtime requirements
 
@@ -52,11 +53,16 @@ cores or a complete playable frontend.
   app-private `files/cores/` directory at runtime.
 - BIOS files are not included. Use only core libraries and BIOS files you are
   legally entitled to use.
-- The repository does not yet provide a complete in-app core/BIOS installation
-  flow. Adding files to `jniLibs` alone does not install them in the app-private
-  directory expected by the current loader.
-- The home dashboard is a frontend preview. Do not expect to browse or launch
-  games from the app yet.
+- The app can import a game file, core `.so`, and BIOS file into its private
+  storage using Android's file picker. It cannot make an incompatible core
+  compatible with the project's native ABI.
+- The dashboard can list imported games and request a launch. Actual emulation
+  depends on a compatible native core being installed for that system.
+- The core must implement the PSG ABI defined in
+  [`android/app/src/main/cpp/include/psg_core_api.h`](android/app/src/main/cpp/include/psg_core_api.h).
+  Renaming a standard emulator plugin library does not make its ABI compatible.
+- BIOS import and a `Skip BIOS` preference are available. Some cores may still
+  have additional BIOS or firmware requirements.
 
 For the detailed native setup and expected core/BIOS paths, see
 [SETUP.md](SETUP.md).
@@ -157,9 +163,9 @@ flutter test
 
 Build the Android release APK with the command in [Build from source](#build-from-source).
 After a signed build is available, verify installation and launch on a physical
-ARM64 Android device. Hardware-dependent controller, thermal, renderer, and core
-loading behavior should be tested on target devices; a successful APK build
-alone does not verify those runtime features.
+ARM64 Android device. Game import, controller, thermal, renderer, and core
+loading behavior require device testing; a successful APK build alone does not
+verify those runtime features.
 
 ## Repository layout
 

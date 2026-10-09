@@ -32,6 +32,7 @@ class PSGEmulatorBridge(context: Context) {
     private var currentRomPath: String? = null
 
     private external fun nativeInit(surface: Surface, filesDir: String): Boolean
+    private external fun nativeReleaseSurface(): Boolean
     private external fun nativeInitRenderer(surface: Surface, backendType: Int): Boolean
     private external fun nativeDestroyRenderer()
     private external fun nativeRenderFrame(): Boolean
@@ -43,6 +44,7 @@ class PSGEmulatorBridge(context: Context) {
         settingsJson: String
     ): String
     private external fun nativeStopGame(): Boolean
+    private external fun nativeIsGameRunning(): Boolean
     private external fun nativeSaveState(slot: Int): Boolean
     private external fun nativeLoadState(slot: Int): Boolean
     private external fun nativeGetPerformanceStats(): String
@@ -143,6 +145,7 @@ class PSGEmulatorBridge(context: Context) {
             Log.e(TAG, "Cannot initialize surface: native library is unavailable")
             return false
         }
+
         if (!surface.isValid) {
             Log.e(TAG, "Cannot initialize an invalid surface")
             return false
@@ -154,6 +157,22 @@ class PSGEmulatorBridge(context: Context) {
             false
         } catch (exception: RuntimeException) {
             Log.e(TAG, "Native surface initialization failed", exception)
+            false
+        }
+    }
+
+    fun releaseSurface(): Boolean {
+        if (!nativeLibraryLoaded) {
+            Log.e(TAG, "Cannot release surface: native library is unavailable")
+            return false
+        }
+        return try {
+            nativeReleaseSurface()
+        } catch (error: UnsatisfiedLinkError) {
+            Log.e(TAG, "Native surface release is unavailable", error)
+            false
+        } catch (exception: RuntimeException) {
+            Log.e(TAG, "Native surface release failed", exception)
             false
         }
     }
@@ -319,6 +338,21 @@ class PSGEmulatorBridge(context: Context) {
         }
     }
 
+    fun isGameRunning(): Boolean {
+        if (!nativeLibraryLoaded) {
+            return false
+        }
+        return try {
+            nativeIsGameRunning()
+        } catch (error: UnsatisfiedLinkError) {
+            Log.e(TAG, "Native game status is unavailable", error)
+            false
+        } catch (exception: RuntimeException) {
+            Log.e(TAG, "Unable to query native game status", exception)
+            false
+        }
+    }
+
     fun saveState(slot: Int): Boolean {
         if (!validateSlot(slot)) {
             Log.e(TAG, "Invalid save-state slot: $slot")
@@ -427,6 +461,13 @@ class PSGEmulatorBridge(context: Context) {
         }
     }
 
+    fun isSkipBiosEnabled(): Boolean =
+        preferences.getBoolean(KEY_SKIP_BIOS, true)
+
+    fun setSkipBiosEnabled(skipBios: Boolean) {
+        preferences.edit().putBoolean(KEY_SKIP_BIOS, skipBios).apply()
+    }
+
     fun getDeviceTier(): String {
         if (!nativeLibraryLoaded) {
             Log.e(TAG, "Cannot detect device tier: native library is unavailable")
@@ -453,7 +494,7 @@ class PSGEmulatorBridge(context: Context) {
             ?: "opengl",
         textureFiltering = preferences.getString(KEY_TEXTURE_FILTERING, "bilinear")
             ?: "bilinear",
-        skipBios = preferences.getBoolean(KEY_SKIP_BIOS, true),
+        skipBios = isSkipBiosEnabled(),
         audioLatencyMs = preferences.getInt(KEY_AUDIO_LATENCY_MS, 64)
     )
 

@@ -19,9 +19,63 @@ NDK r25c is version `25.2.9519653`.
 4. Apply the changes. The app Gradle configuration pins this NDK version.
 5. In **SDK Tools**, install **CMake 3.22.1** if it is not already installed.
 
-## Install core libraries and BIOS files
+## Import compatible core libraries and BIOS files
 
-Build-time ARM64 core libraries belong in:
+The app's home screen has **Install core**, **Import BIOS**, and **Import game**
+actions. These use Android's document picker and copy the selected files into
+the app-private files directory. You do not need to access
+`/data/user/0/com.psg.app/` with ADB.
+
+The core importer maps systems to these app-private filenames:
+
+| Console | Core library | BIOS filename |
+| --- | --- | --- |
+| PS1 | `files/cores/libpcsx_rearmed.so` | `files/bios/scph1001.bin` |
+| PS2 | `files/cores/libplay.so` | `files/bios/ps2-0230e-20080220.bin` |
+| PS3 | `files/cores/librpcs3_lite.so` | `files/bios/ps3.bin` |
+| PS4 | `files/cores/libspine_lite.so` | `files/bios/ps4.bin` |
+
+The importer only copies files; it does **not** compile a core or adapt a
+third-party emulator library. The selected core must be an ARM64 Android
+library compatible with the custom PSG native interface. At minimum, it must
+export the versioned C ABI in
+[`android/app/src/main/cpp/include/psg_core_api.h`](android/app/src/main/cpp/include/psg_core_api.h):
+
+```c
+uint32_t psg_core_api_version(void); /* returns PSG_CORE_API_VERSION (1) */
+int psg_core_init(
+    const char *rom_path,
+    const char *console_type,
+    const char *bios_path,
+    const char *settings_json,
+    const PSGHostCallbacks *host,
+    ANativeWindow *window
+);
+int psg_core_run(const PSGInputState *input_state);
+void psg_core_shutdown(void);
+```
+
+`psg_core_init` must return `0` on success. The host callback table supplies
+audio initialization, sample output, volume, and teardown. The native frontend
+passes a synchronized snapshot of physical/virtual controller state to every
+`psg_core_run` call. The core owns video rendering to the provided
+`ANativeWindow`. `psg_core_run` is called repeatedly on the emulation thread and
+must return `0` while it should continue; a non-zero return ends the run loop.
+`psg_core_shutdown` is called when stopping.
+Save/load state and live settings are optional additional entry points:
+`psg_core_save_state(const char *path)`,
+`psg_core_load_state(const char *path)`, and
+`psg_core_apply_settings(const char *settings_json)`.
+
+Most emulator cores expose their own ABI (for example, a frontend-specific
+plugin ABI) and will **not** work just because they are renamed to one of these
+filenames. A ROM/game image is data, not a core library. If you do not have a
+core built for this PSG ABI, game launch will report a missing or incompatible
+core. No console cores, games, or BIOS files are bundled or provided here.
+Compatibility and performance—particularly for experimental PS3/PS4 entries—
+are not guaranteed.
+
+For manual development packaging only, ARM64 libraries can also be placed in:
 
 ```text
 android/app/src/main/jniLibs/arm64-v8a/
@@ -36,22 +90,25 @@ Use these exact filenames:
 | PS3 | `librpcs3_lite.so` |
 | PS4 | `libspine_lite.so` |
 
-The current `loadCore` bridge looks for the selected core under the app's private files directory, not directly in `jniLibs`. At runtime, the core must therefore be installed/copied to:
+At runtime, the core loader uses the app-private files directory:
 
 ```text
 /data/user/0/com.psg.app/files/cores/
 ```
 
-Expected runtime paths are `/data/user/0/com.psg.app/files/cores/libpcsx_rearmed.so`, `libplay.so`, `librpcs3_lite.so`, and `libspine_lite.so`. Install them through an app-side core installer or another mechanism that can write to the app-private directory; the Android shell normally cannot write there directly.
+The home screen importer writes the selected core to the matching path. A build-time library under `jniLibs` is packaged into the APK but is not automatically copied to this runtime directory by the current app.
 
-Place BIOS files in the app-private directory:
+The home screen's **Import BIOS** action copies the selected BIOS into the
+mapped app-private filename above. The home screen's **Skip BIOS** switch
+controls the `skipBios` launch setting and defaults to `true`. Turn it off when
+the selected core requires the installed BIOS.
 
 ```text
 /data/user/0/com.psg.app/files/bios/scph1001.bin
 /data/user/0/com.psg.app/files/bios/ps2-0230e-20080220.bin
 ```
 
-The PS1 and PS2 BIOS files are required when **Skip BIOS** is disabled. The bridge currently looks for `ps3.bin` and `ps4.bin` for those consoles if BIOS use is enabled. Only use BIOS files and core libraries you are legally entitled to use.
+Only use BIOS files and core libraries you are legally entitled to use.
 
 ## Enable USB debugging on a Samsung Galaxy S10+
 

@@ -1,41 +1,15 @@
 #include <android/input.h>
 #include <android/log.h>
+#include "psg_core_api.h"
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "PSG_CORE", __VA_ARGS__)
 
-struct PSGInputState {
-    bool cross;
-    bool circle;
-    bool square;
-    bool triangle;
-    bool l1;
-    bool r1;
-    bool l2_digital;
-    bool r2_digital;
-    float l2_analog;
-    float r2_analog;
-    bool up;
-    bool down;
-    bool left;
-    bool right;
-    bool l3;
-    bool r3;
-    bool options;
-    bool share;
-    bool ps_button;
-    bool touchpad;
-    float left_stick_x;
-    float left_stick_y;
-    float right_stick_x;
-    float right_stick_y;
-    bool connected;
-    char controller_name[64];
-};
-
 PSGInputState g_input_state{};
+std::mutex g_input_state_mutex;
 
 namespace {
 
@@ -163,6 +137,7 @@ bool processKeyEvent(int keyCode, int action, int source) {
     if (action != AKEY_EVENT_ACTION_DOWN && action != AKEY_EVENT_ACTION_UP) {
         return false;
     }
+    std::lock_guard<std::mutex> lock(g_input_state_mutex);
     if (!set_digital_button(keyCode, action == AKEY_EVENT_ACTION_DOWN)) {
         return false;
     }
@@ -172,6 +147,7 @@ bool processKeyEvent(int keyCode, int action, int source) {
 
 void processMotionEvent(float axisX, float axisY, float axisZ, float axisRZ,
                         float axisLT, float axisRT, float hatX, float hatY) {
+    std::lock_guard<std::mutex> lock(g_input_state_mutex);
     g_input_state.left_stick_x = normalized_axis(axisX);
     g_input_state.left_stick_y = normalized_axis(axisY);
     g_input_state.right_stick_x = normalized_axis(axisZ);
@@ -187,6 +163,7 @@ void processMotionEvent(float axisX, float axisY, float axisZ, float axisRZ,
 }
 
 void processVirtualInput(int buttonId, bool pressed, float axisX, float axisY) {
+    std::lock_guard<std::mutex> lock(g_input_state_mutex);
     if (buttonId >= 0 && buttonId <= 15) {
         set_virtual_button(buttonId, pressed);
         g_input_state.connected = true;
@@ -207,4 +184,9 @@ void processVirtualInput(int buttonId, bool pressed, float axisX, float axisY) {
     }
 
     LOGE("Ignoring invalid virtual controller button ID: %d", buttonId);
+}
+
+PSGInputState getInputStateSnapshot() {
+    std::lock_guard<std::mutex> lock(g_input_state_mutex);
+    return g_input_state;
 }

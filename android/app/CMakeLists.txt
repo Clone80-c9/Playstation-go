@@ -20,6 +20,8 @@ add_library(psg_bridge SHARED
     src/main/cpp/thermal_monitor.cpp
 )
 
+target_include_directories(psg_bridge PUBLIC src/main/cpp/include)
+
 find_library(log-lib log REQUIRED)
 find_library(android-lib android REQUIRED)
 find_library(egl-lib EGL REQUIRED)

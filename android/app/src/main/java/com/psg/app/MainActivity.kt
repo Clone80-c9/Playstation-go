@@ -3,14 +3,19 @@ package com.psg.app
 import android.util.Log
 import android.view.KeyEvent
 import android.view.MotionEvent
+import java.io.File
+import java.util.Locale
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.StandardMethodCodec
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : FlutterActivity() {
     private val emulatorBridge: PSGEmulatorBridge by lazy(LazyThreadSafetyMode.NONE) {
@@ -32,6 +37,17 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
 
         val messenger = flutterEngine.dartExecutor.binaryMessenger
+        flutterEngine.platformViewsController.registry.registerViewFactory(
+            PSGGameSurfaceView.VIEW_TYPE,
+            PSGGameSurfaceViewFactory(emulatorBridge, messenger)
+        )
+        MethodChannel(
+            messenger,
+            PSGGameSurfaceView.SURFACE_CHANNEL,
+            StandardMethodCodec.INSTANCE
+        ).setMethodCallHandler { _, result ->
+            result.notImplemented()
+        }
         MethodChannel(messenger, EMULATOR_CHANNEL).setMethodCallHandler { call, result ->
             try {
                 handleEmulatorCall(call, result)
@@ -82,12 +98,63 @@ class MainActivity : FlutterActivity() {
             "launchGame" -> {
                 val romPath = call.requiredStringArgument("romPath")
                 val consoleType = call.requiredStringArgument("consoleType")
-                emulatorBridge.launchGame(romPath, consoleType).fold(
-                    onSuccess = { result.success("OK") },
-                    onFailure = { result.error("LAUNCH_GAME_FAILED", it.message, null) }
+                thermalScope.launch(Dispatchers.IO) {
+                    val launchResult = emulatorBridge.launchGame(romPath, consoleType)
+                    withContext(Dispatchers.Main.immediate) {
+                        launchResult.fold(
+                            onSuccess = { result.success("OK") },
+                            onFailure = {
+                                result.error("LAUNCH_GAME_FAILED", it.message, null)
+                            }
+                        )
+                    }
+                }
+            }
+            "importGame" -> {
+                val arguments = call.argumentMap()
+                val sourcePath = arguments.requiredString("sourcePath")
+                val consoleType = arguments.requiredString("consoleType")
+                    .trim().lowercase(Locale.ROOT)
+                if (consoleType !in SUPPORTED_CONSOLES) {
+                    throw IllegalArgumentException("Unsupported console type")
+                }
+                copyImportedFile(sourcePath, "games/$consoleType", null, result)
+            }
+            "installCore" -> {
+                val arguments = call.argumentMap()
+                val sourcePath = arguments.requiredString("sourcePath")
+                val consoleType = arguments.requiredString("consoleType")
+                    .trim().lowercase(Locale.ROOT)
+                val libraryName = CORE_LIBRARY_NAMES[consoleType]
+                    ?: throw IllegalArgumentException("Unsupported console type")
+                if (!sourcePath.endsWith(".so", ignoreCase = true)) {
+                    throw IllegalArgumentException("Core file must have a .so extension")
+                }
+                copyImportedFile(
+                    sourcePath,
+                    "cores",
+                    "lib$libraryName.so",
+                    result
                 )
             }
+            "installBios" -> {
+                val arguments = call.argumentMap()
+                val sourcePath = arguments.requiredString("sourcePath")
+                val consoleType = arguments.requiredString("consoleType")
+                    .trim().lowercase(Locale.ROOT)
+                val biosName = BIOS_FILE_NAMES[consoleType]
+                    ?: throw IllegalArgumentException("Unsupported console type")
+                copyImportedFile(sourcePath, "bios", biosName, result)
+            }
+            "getSkipBios" -> result.success(emulatorBridge.isSkipBiosEnabled())
+            "setSkipBios" -> {
+                emulatorBridge.setSkipBiosEnabled(
+                    call.argumentMap().requiredBoolean("skipBios")
+                )
+                result.success(true)
+            }
             "stopGame" -> result.success(emulatorBridge.stopGame())
+            "isGameRunning" -> result.success(emulatorBridge.isGameRunning())
             "saveState" -> result.success(
                 emulatorBridge.saveState(
                     call.argumentMap().requiredInt("slot")
@@ -137,6 +204,91 @@ class MainActivity : FlutterActivity() {
             }
             "getDeviceTier" -> result.success(emulatorBridge.getDeviceTier())
             else -> result.notImplemented()
+        }
+    }
+
+    private fun copyImportedFile(
+        sourcePath: String,
+        relativeDirectory: String,
+        requestedName: String?,
+        result: MethodChannel.Result
+    ) {
+        thermalScope.launch(Dispatchers.IO) {
+            try {
+                val source = File(sourcePath).canonicalFile
+                if (!source.isFile || source.length() <= 0L) {
+                    throw IllegalArgumentException("Selected file is missing or empty")
+                }
+
+                val directory = File(filesDir, relativeDirectory).canonicalFile
+                if (!directory.mkdirs() && !directory.isDirectory) {
+                    throw IllegalStateException("Unable to create app storage directory")
+                }
+
+                val fileName = requestedName ?: source.name
+                var destination = File(directory, fileName).canonicalFile
+                if (destination.parentFile != directory) {
+                    throw IllegalArgumentException("Invalid destination file name")
+                }
+                if (source == destination) {
+                    withContext(Dispatchers.Main.immediate) {
+                        result.success(destination.absolutePath)
+                    }
+                    return@launch
+                }
+                if (requestedName == null && destination.exists()) {
+                    val extension = destination.extension
+                    val stem = destination.nameWithoutExtension
+                    var suffix = 1
+                    do {
+                        val uniqueName = if (extension.isEmpty()) {
+                            "$stem ($suffix)"
+                        } else {
+                            "$stem ($suffix).$extension"
+                        }
+                        destination = File(directory, uniqueName)
+                        suffix++
+                    } while (destination.exists())
+                }
+                if (requestedName == null) {
+                    source.copyTo(destination, overwrite = false)
+                } else {
+                    val temporary = File(directory, "${destination.name}.importing")
+                    val backup = File(directory, "${destination.name}.previous")
+                    if (temporary.exists() && !temporary.delete()) {
+                        throw IllegalStateException("Unable to prepare core import")
+                    }
+                    if (backup.exists() && !backup.delete()) {
+                        throw IllegalStateException("Unable to prepare core backup")
+                    }
+                    source.copyTo(temporary, overwrite = false)
+                    val hadDestination = destination.exists()
+                    if (hadDestination && !destination.renameTo(backup)) {
+                        temporary.delete()
+                        throw IllegalStateException("Unable to back up installed file")
+                    }
+                    if (!temporary.renameTo(destination)) {
+                        temporary.delete()
+                        if (hadDestination) backup.renameTo(destination)
+                        throw IllegalStateException("Unable to finalize imported file")
+                    }
+                    if (hadDestination && !backup.delete()) {
+                        Log.w(TAG, "Unable to remove replaced core backup: ${backup.name}")
+                    }
+                }
+                withContext(Dispatchers.Main.immediate) {
+                    result.success(destination.absolutePath)
+                }
+            } catch (exception: Exception) {
+                Log.e(TAG, "Unable to import selected file", exception)
+                withContext(Dispatchers.Main.immediate) {
+                    result.error(
+                        "IMPORT_FAILED",
+                        exception.message ?: "Unable to import selected file",
+                        null
+                    )
+                }
+            }
         }
     }
 
@@ -312,5 +464,18 @@ class MainActivity : FlutterActivity() {
         private const val EMULATOR_CHANNEL = "com.psg.emulator/core"
         private const val CONTROLLER_CHANNEL = "com.psg.emulator/controller"
         private const val THERMAL_CHANNEL = "com.psg.emulator/thermal"
+        private val SUPPORTED_CONSOLES = setOf("ps1", "ps2", "ps3", "ps4")
+        private val CORE_LIBRARY_NAMES = mapOf(
+            "ps1" to "pcsx_rearmed",
+            "ps2" to "play",
+            "ps3" to "rpcs3_lite",
+            "ps4" to "spine_lite"
+        )
+        private val BIOS_FILE_NAMES = mapOf(
+            "ps1" to "scph1001.bin",
+            "ps2" to "ps2-0230e-20080220.bin",
+            "ps3" to "ps3.bin",
+            "ps4" to "ps4.bin"
+        )
     }
 }

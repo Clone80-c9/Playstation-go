@@ -15,6 +15,75 @@ class EmulatorChannel {
       );
     } on PlatformException catch (error, stackTrace) {
       debugPrint('loadCore failed: ${error.message}\n$stackTrace');
+      rethrow;
+    }
+  }
+
+  static Future<String?> importGame(
+      String sourcePath, String consoleType) async {
+    try {
+      return await _channel.invokeMethod<String>(
+        'importGame',
+        <String, Object>{
+          'sourcePath': sourcePath,
+          'consoleType': consoleType,
+        },
+      );
+    } on PlatformException catch (error, stackTrace) {
+      debugPrint('importGame failed: ${error.message}\n$stackTrace');
+      rethrow;
+    }
+  }
+
+  static Future<String?> installCore(
+      String sourcePath, String consoleType) async {
+    try {
+      return await _channel.invokeMethod<String>(
+        'installCore',
+        <String, Object>{
+          'sourcePath': sourcePath,
+          'consoleType': consoleType,
+        },
+      );
+    } on PlatformException catch (error, stackTrace) {
+      debugPrint('installCore failed: ${error.message}\n$stackTrace');
+      rethrow;
+    }
+  }
+
+  static Future<String?> installBios(
+      String sourcePath, String consoleType) async {
+    try {
+      return await _channel.invokeMethod<String>(
+        'installBios',
+        <String, Object>{
+          'sourcePath': sourcePath,
+          'consoleType': consoleType,
+        },
+      );
+    } on PlatformException catch (error, stackTrace) {
+      debugPrint('installBios failed: ${error.message}\n$stackTrace');
+      rethrow;
+    }
+  }
+
+  static Future<bool?> getSkipBios() async {
+    try {
+      return await _channel.invokeMethod<bool>('getSkipBios');
+    } on PlatformException catch (error, stackTrace) {
+      debugPrint('getSkipBios failed: ${error.message}\n$stackTrace');
+      return null;
+    }
+  }
+
+  static Future<bool?> setSkipBios(bool skipBios) async {
+    try {
+      return await _channel.invokeMethod<bool>(
+        'setSkipBios',
+        <String, Object>{'skipBios': skipBios},
+      );
+    } on PlatformException catch (error, stackTrace) {
+      debugPrint('setSkipBios failed: ${error.message}\n$stackTrace');
       return null;
     }
   }
@@ -33,7 +102,7 @@ class EmulatorChannel {
       );
     } on PlatformException catch (error, stackTrace) {
       debugPrint('launchGame failed: ${error.message}\n$stackTrace');
-      return null;
+      rethrow;
     }
   }
 
@@ -42,6 +111,15 @@ class EmulatorChannel {
       return await _channel.invokeMethod<bool>('stopGame');
     } on PlatformException catch (error, stackTrace) {
       debugPrint('stopGame failed: ${error.message}\n$stackTrace');
+      return null;
+    }
+  }
+
+  static Future<bool?> isGameRunning() async {
+    try {
+      return await _channel.invokeMethod<bool>('isGameRunning');
+    } on PlatformException catch (error, stackTrace) {
+      debugPrint('isGameRunning failed: ${error.message}\n$stackTrace');
       return null;
     }
   }
