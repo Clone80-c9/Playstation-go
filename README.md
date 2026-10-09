@@ -4,9 +4,10 @@
 emulation project.**
 
 PlayStation Go combines a Flutter application shell with Android/Kotlin platform
-integration and a C++ native layer. The project is under active development: the
-current home screen is a placeholder, and this repository does not include the
-console core libraries or BIOS files needed to run games.
+integration and a C++ native layer. The current home dashboard presents device
+and controller status plus setup guidance. The project is under active
+development and this repository does not include the console core libraries or
+BIOS files needed to run games.
 
 > [!IMPORTANT]
 > This is a development preview, not a game-ready emulator or a production
@@ -30,7 +31,8 @@ console core libraries or BIOS files needed to run games.
 
 ## What is in the repository
 
-- Flutter app entry point, splash screen, and a placeholder home screen.
+- Flutter app entry point, splash screen, and a preview dashboard with Android
+  controller discovery and honest setup/status messaging.
 - Kotlin platform code for emulator/core operations, controller input, and
   thermal monitoring.
 - C++ sources for the native bridge, input, renderer, audio, and thermal
@@ -53,8 +55,8 @@ cores or a complete playable frontend.
 - The repository does not yet provide a complete in-app core/BIOS installation
   flow. Adding files to `jniLibs` alone does not install them in the app-private
   directory expected by the current loader.
-- The current home screen is intentionally a placeholder. Do not expect to
-  browse or launch games from the app yet.
+- The home dashboard is a frontend preview. Do not expect to browse or launch
+  games from the app yet.
 
 For the detailed native setup and expected core/BIOS paths, see
 [SETUP.md](SETUP.md).
