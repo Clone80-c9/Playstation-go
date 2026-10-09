@@ -11,7 +11,7 @@ BIOS files needed to run games.
 
 ## Download the Android test APK
 
-**[Download the latest Android ARM64 test APK](https://github.com/Clone80-c9/Playstation-go/releases/download/android-test-build/app-debug.apk)**
+### [⬇️ Download PSG APK](https://github.com/Clone80-c9/Playstation-go/releases/download/android-test-build/app-debug.apk)
 | [View release details](https://github.com/Clone80-c9/Playstation-go/releases/tag/android-test-build)
 
 Open the download link in Chrome on your Android phone, allow Chrome to install
@@ -152,7 +152,7 @@ configuration. A debug build is for development; it is not a production release.
 
 ### Install the Android test APK
 
-Use the **[Download the latest Android ARM64 test APK](https://github.com/Clone80-c9/Playstation-go/releases/download/android-test-build/app-debug.apk)**
+Use the **[Download PSG APK](https://github.com/Clone80-c9/Playstation-go/releases/download/android-test-build/app-debug.apk)**
 link above on the Android device. If the direct download is unavailable, open
 the [GitHub Releases](https://github.com/Clone80-c9/Playstation-go/releases)
 page and confirm that the Android test build has completed.
