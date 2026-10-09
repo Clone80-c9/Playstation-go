@@ -42,6 +42,13 @@
 build/
 Build/
 build-*/
+.dart_tool/
+android/.gradle/
+android/app/.cxx/
+.flutter-plugins
+.flutter-plugins-dependencies
+android/local.properties
+build_log.txt
 
 # CMake generated files
 CMakeFiles/
