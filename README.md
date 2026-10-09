@@ -9,12 +9,35 @@ and controller status plus setup guidance. The project is under active
 development and this repository does not include the console core libraries or
 BIOS files needed to run games.
 
+## Download the Android test APK
+
+**[Download the latest Android ARM64 test APK](https://github.com/Clone80-c9/Playstation-go/releases/download/android-test-build/app-debug.apk)**
+| [View release details](https://github.com/Clone80-c9/Playstation-go/releases/tag/android-test-build)
+
+Open the download link in Chrome on your Android phone, allow Chrome to install
+unknown apps if Android prompts you, then open the downloaded APK and tap
+**Install**. The APK is a debug-signed test build, not a production release.
+If Android reports a signature conflict while updating, uninstall the previous
+test build first; uninstalling removes its app data.
+
+The download is published by GitHub Actions for pushes to `main` and
+`fix/android-release-build`. If the link has no APK yet, the workflow has not
+completed its first successful run; check the repository's
+[Actions](https://github.com/Clone80-c9/Playstation-go/actions) page.
+
+> [!NOTE]
+> The app targets `arm64-v8a` and its native bridge is compiled for ARMv8.2-A,
+> which is suitable for Snapdragon 855 (Kryo 485) and newer ARM64 devices.
+> This is a CPU/ABI target, not a guarantee of game compatibility or speed.
+> The APK does not contain an emulator core: actual gameplay still requires a
+> core built for Android ARM64 and the PSG ABI documented below.
+
 > [!IMPORTANT]
 > This is a development preview, not a game-ready emulator or a production
-> release. The APK currently produced by the release build is **unsigned** and
-> cannot be installed as a normal Android app. The app can import user-selected
-> games, cores, and BIOS files, but no compatible emulator cores are bundled.
-> Public release also requires signing and real-device validation.
+> release. The downloadable debug APK is for testing only. The release build
+> produced locally is **unsigned**; production distribution still requires a
+> maintainer-controlled signing key and real-device validation. No compatible
+> emulator cores are bundled.
 
 ## Project profile
 
@@ -26,6 +49,7 @@ BIOS files needed to run games.
 | **Android minimum** | Android 8.0 (API 26) |
 | **Android target / compile SDK** | API 34 |
 | **Native ABI** | `arm64-v8a` only |
+| **Native CPU target** | ARMv8.2-A (Snapdragon 855 / Kryo 485 class and newer) |
 | **Application version** | `1.0.0+1` |
 | **Status** | Early development / preview |
 
@@ -126,19 +150,18 @@ configuration. A debug build is for development; it is not a production release.
 
 ## Install an APK
 
-### Install a signed APK from a future GitHub Release
+### Install the Android test APK
 
-Once a signed APK has been published, open the repository's
-[GitHub Releases](https://github.com/Clone80-c9/Playstation-go/releases) page on
-the Android device and download the APK asset for the release. In Android
-settings, allow the browser or file manager to **Install unknown apps** if
-prompted, open the downloaded APK, review the installer prompt, and choose
-**Install**.
+Use the **[Download the latest Android ARM64 test APK](https://github.com/Clone80-c9/Playstation-go/releases/download/android-test-build/app-debug.apk)**
+link above on the Android device. If the direct download is unavailable, open
+the [GitHub Releases](https://github.com/Clone80-c9/Playstation-go/releases)
+page and confirm that the Android test build has completed.
 
-The signed APK must have a valid signature. Android may block installation if
-the app is already installed with a different signing key; uninstalling first
-will remove that app's local data. Updates must continue to use the same
-maintainer-controlled signing key.
+When prompted, allow Chrome to **Install unknown apps**, open the downloaded
+APK, review Android's installer prompt, and choose **Install**. This debug APK
+is intended for device testing; production updates require a stable,
+maintainer-controlled signing key. Android may require uninstalling an earlier
+build if its signing key differs, which removes that app's local data.
 
 ### Install a signed APK using ADB
 
